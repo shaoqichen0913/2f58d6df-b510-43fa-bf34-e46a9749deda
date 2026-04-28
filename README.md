@@ -264,6 +264,17 @@ pnpm skills <cmd>  # run CLI from source
 
 ---
 
+## End-to-end test
+
+The framework was validated in a live Codex session using two installed skills against a real workspace. The session covers:
+
+- `code-reviewer` reviewing a FastAPI + OpenAI server file — four concrete findings across Critical / High / Medium severity
+- `knowledge-retriever` searching a connected Notion workspace — surfaced relevant pages and flagged raw API keys stored in plaintext docs
+
+Full session transcript and findings: [docs/user-test-report.md](docs/user-test-report.md)
+
+---
+
 ## Related
 
 - **Skill registry** — the default registry this framework points to: [shaoqichen0913/e8c7cc37-982a-4359-be55-2fd466344bc9](https://github.com/shaoqichen0913/e8c7cc37-982a-4359-be55-2fd466344bc9)
