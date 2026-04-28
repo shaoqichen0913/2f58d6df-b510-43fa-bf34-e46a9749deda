@@ -264,6 +264,12 @@ pnpm skills <cmd>  # run CLI from source
 
 ---
 
+## Related
+
+- **Skill registry** — the default registry this framework points to: [shaoqichen0913/e8c7cc37-982a-4359-be55-2fd466344bc9](https://github.com/shaoqichen0913/e8c7cc37-982a-4359-be55-2fd466344bc9)
+
+---
+
 ## License
 
 MIT
