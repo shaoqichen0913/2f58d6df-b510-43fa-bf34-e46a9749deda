@@ -2,6 +2,7 @@
   "name": "@shaoqichen0913/skill-framework",
   "version": "1.0.2",
   "description": "Core: discovery, parsing, installation, activation, execution",
+  "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

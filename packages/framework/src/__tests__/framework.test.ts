@@ -6,6 +6,7 @@ import { parseSkill, ParseError } from "../parser.js";
 import { discoverSkills } from "../discovery.js";
 import { installSkill, uninstallSkill } from "../installer/index.js";
 import { keywordActivate } from "../activator/keyword.js";
+import { runDoctor } from "../doctor.js";
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -225,6 +226,42 @@ describe("installSkill / uninstallSkill", () => {
     expect((toml.match(/\[mcp_servers\.srv\]|srv = /g) || []).length).toBeGreaterThanOrEqual(1);
   });
 
+  it("writes supported MCP server fields to config.toml", () => {
+    const skillDir = writeSkill(srcDir, "full-mcp", {
+      name: "full-mcp",
+      description: "Full MCP field mapping",
+      mcp_servers: JSON.stringify([
+        {
+          name: "http_srv",
+          transport: "http",
+          url: "https://x.com/mcp",
+          http_headers: { "X-Client": "skill-framework" },
+          env_http_headers: { Authorization: "AUTH_TOKEN" },
+          startup_timeout_sec: 10,
+          tool_timeout_sec: 90,
+        },
+        {
+          name: "stdio_srv",
+          transport: "stdio",
+          command: "node",
+          args: ["server.js"],
+          cwd: "/tmp",
+          experimental_environment: "local",
+        },
+      ]),
+    });
+    const manifest = parseSkill(skillDir);
+    const result = installSkill(manifest, "project", destBase);
+
+    const toml = fs.readFileSync(result.configTomlPath, "utf-8");
+    expect(toml).toContain("http_headers");
+    expect(toml).toContain("env_http_headers");
+    expect(toml).toContain("startup_timeout_sec = 10");
+    expect(toml).toContain("tool_timeout_sec = 90");
+    expect(toml).toContain("cwd = \"/tmp\"");
+    expect(toml).toContain("experimental_environment = \"local\"");
+  });
+
   it("uninstall removes skill folder and cleans config.toml", () => {
     const skillDir = writeSkill(srcDir, "removable", {
       name: "removable",
@@ -240,6 +277,99 @@ describe("installSkill / uninstallSkill", () => {
     expect(fs.existsSync(installResult.skillDestDir)).toBe(false);
     const toml = fs.readFileSync(installResult.configTomlPath, "utf-8");
     expect(toml).not.toContain("svc");
+  });
+
+  it("uninstall reads _framework.json when installed SKILL.md has sanitized metadata", () => {
+    const skillDir = writeSkill(srcDir, "installed-cleanup", {
+      name: "installed-cleanup",
+      description: "Will clean installed metadata",
+      mcp_servers: JSON.stringify([{ name: "installed_svc", transport: "http", url: "https://x.com/mcp" }]),
+    });
+    const manifest = parseSkill(skillDir);
+    const installResult = installSkill(manifest, "project", destBase);
+
+    const installedSkillMd = fs.readFileSync(path.join(installResult.skillDestDir, "SKILL.md"), "utf-8");
+    expect(installedSkillMd).not.toContain("mcp_servers");
+
+    uninstallSkill("installed-cleanup", "project", [], destBase);
+
+    const toml = fs.readFileSync(installResult.configTomlPath, "utf-8");
+    expect(toml).not.toContain("installed_svc");
+  });
+
+  it("keeps shared MCP servers when uninstalling one of multiple dependent skills", () => {
+    const skillA = writeSkill(srcDir, "shared-a", {
+      name: "shared-a",
+      description: "Uses a shared MCP server",
+      mcp_servers: JSON.stringify([{ name: "shared_svc", transport: "http", url: "https://x.com/mcp" }]),
+    });
+    const skillB = writeSkill(srcDir, "shared-b", {
+      name: "shared-b",
+      description: "Also uses a shared MCP server",
+      mcp_servers: JSON.stringify([{ name: "shared_svc", transport: "http", url: "https://x.com/mcp" }]),
+    });
+    const installA = installSkill(parseSkill(skillA), "project", destBase);
+    const installB = installSkill(parseSkill(skillB), "project", destBase);
+
+    const uninstallA = uninstallSkill("shared-a", "project", [], destBase);
+
+    expect(uninstallA.mcpServersRemoved).toHaveLength(0);
+    expect(fs.existsSync(installA.skillDestDir)).toBe(false);
+    expect(fs.existsSync(installB.skillDestDir)).toBe(true);
+    expect(fs.readFileSync(installA.configTomlPath, "utf-8")).toContain("shared_svc");
+  });
+
+  it("removes a shared MCP server when uninstalling the last dependent skill", () => {
+    const skillA = writeSkill(srcDir, "last-shared-a", {
+      name: "last-shared-a",
+      description: "Uses a shared MCP server",
+      mcp_servers: JSON.stringify([{ name: "last_shared_svc", transport: "http", url: "https://x.com/mcp" }]),
+    });
+    const skillB = writeSkill(srcDir, "last-shared-b", {
+      name: "last-shared-b",
+      description: "Also uses a shared MCP server",
+      mcp_servers: JSON.stringify([{ name: "last_shared_svc", transport: "http", url: "https://x.com/mcp" }]),
+    });
+    const installA = installSkill(parseSkill(skillA), "project", destBase);
+    installSkill(parseSkill(skillB), "project", destBase);
+
+    uninstallSkill("last-shared-a", "project", [], destBase);
+    const uninstallB = uninstallSkill("last-shared-b", "project", [], destBase);
+
+    expect(uninstallB.mcpServersRemoved).toEqual(["last_shared_svc"]);
+    expect(fs.readFileSync(installA.configTomlPath, "utf-8")).not.toContain("last_shared_svc");
+  });
+
+  it("does not overwrite a malformed config.toml during install", () => {
+    const skillDir = writeSkill(srcDir, "bad-config-install", {
+      name: "bad-config-install",
+      description: "Should not install over malformed config",
+      mcp_servers: JSON.stringify([{ name: "svc", transport: "http", url: "https://x.com/mcp" }]),
+    });
+    const configDir = path.join(destBase, ".codex");
+    const configPath = path.join(configDir, "config.toml");
+    fs.mkdirSync(configDir, { recursive: true });
+    fs.writeFileSync(configPath, "[mcp_servers.svc\nurl = \"broken\"\n", "utf-8");
+
+    const manifest = parseSkill(skillDir);
+    expect(() => installSkill(manifest, "project", destBase)).toThrow(/Failed to parse config\.toml/);
+    expect(fs.readFileSync(configPath, "utf-8")).toBe("[mcp_servers.svc\nurl = \"broken\"\n");
+    expect(fs.existsSync(path.join(destBase, ".codex", "skills", "bad-config-install"))).toBe(false);
+  });
+
+  it("does not remove the skill folder when uninstall cannot parse config.toml", () => {
+    const skillDir = writeSkill(srcDir, "bad-config-uninstall", {
+      name: "bad-config-uninstall",
+      description: "Should not half uninstall",
+      mcp_servers: JSON.stringify([{ name: "svc", transport: "http", url: "https://x.com/mcp" }]),
+    });
+    const manifest = parseSkill(skillDir);
+    const installResult = installSkill(manifest, "project", destBase);
+    fs.writeFileSync(installResult.configTomlPath, "[mcp_servers.svc\nurl = \"broken\"\n", "utf-8");
+
+    expect(() => uninstallSkill("bad-config-uninstall", "project", [], destBase)).toThrow(/Failed to parse config\.toml/);
+    expect(fs.existsSync(installResult.skillDestDir)).toBe(true);
+    expect(fs.existsSync(path.join(installResult.skillDestDir, "_framework.json"))).toBe(true);
   });
 });
 
@@ -282,5 +412,35 @@ describe("keywordActivate", () => {
   it("returns empty when no skills provided", () => {
     const result = keywordActivate("find something", []);
     expect(result.activated).toHaveLength(0);
+  });
+});
+
+// ── Doctor tests ─────────────────────────────────────────────────────────────
+
+describe("runDoctor", () => {
+  let tmp: string;
+  beforeEach(() => { tmp = makeTmpDir(); });
+  afterEach(() => { fs.rmSync(tmp, { recursive: true, force: true }); });
+
+  it("does not execute shell metacharacters in stdio MCP command checks", async () => {
+    const skillDir = writeSkill(tmp, "doctor-safe", {
+      name: "doctor-safe",
+      description: "Checks command safety",
+    });
+    const pwnPath = path.join(tmp, "pwned");
+    fs.writeFileSync(path.join(skillDir, "_framework.json"), JSON.stringify({
+      mcp_servers: [{
+        name: "unsafe",
+        transport: "stdio",
+        command: `node;touch ${pwnPath}`,
+      }],
+      scripts: [],
+    }));
+
+    const manifest = parseSkill(skillDir);
+    const result = await runDoctor(manifest);
+
+    expect(result.checks[0].status).toBe("error");
+    expect(fs.existsSync(pwnPath)).toBe(false);
   });
 });

@@ -2,6 +2,7 @@
   "name": "@shaoqichen0913/skill-framework-cli",
   "version": "1.0.4",
   "description": "CLI for the skill framework — install, discover, activate, and run agent skills",
+  "license": "MIT",
   "type": "module",
   "bin": {
     "skills": "./dist/index.js"

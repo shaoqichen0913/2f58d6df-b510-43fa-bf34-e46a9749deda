@@ -6,7 +6,7 @@ import { fetchIndex, searchIndex } from "@shaoqichen0913/skill-framework";
 
 const DEFAULT_REGISTRY =
   process.env.SKILL_REGISTRY_URL ??
-  "https://raw.githubusercontent.com/shaoqichen0913/skill-registry/main";
+  "https://raw.githubusercontent.com/shaoqichen0913/e8c7cc37-982a-4359-be55-2fd466344bc9/main";
 
 export function registerSearch(program: Command): void {
   program

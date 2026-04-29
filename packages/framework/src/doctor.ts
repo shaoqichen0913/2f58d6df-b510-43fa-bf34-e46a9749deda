@@ -4,7 +4,7 @@
 
 import * as fs from "fs";
 import * as path from "path";
-import { execSync } from "child_process";
+import { spawnSync } from "child_process";
 import type { SkillManifest } from "./schemas/manifest.js";
 import type { McpServerDecl } from "./schemas/mcp-server.js";
 import type { ScriptDecl } from "./schemas/script.js";
@@ -206,10 +206,7 @@ function checkScript(absolutePath: string, name: string): DoctorCheck {
 // ── Helpers ───────────────────────────────────────────────────────────────
 
 function commandInPath(cmd: string): string | null {
-  try {
-    const result = execSync(`which ${cmd} 2>/dev/null`, { encoding: "utf-8" }).trim();
-    return result || null;
-  } catch {
-    return null;
-  }
+  const result = spawnSync("which", [cmd], { encoding: "utf-8" });
+  if (result.status !== 0) return null;
+  return result.stdout.trim() || null;
 }

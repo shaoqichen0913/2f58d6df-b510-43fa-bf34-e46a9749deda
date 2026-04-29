@@ -6,9 +6,11 @@ import * as fs from "fs";
 import * as path from "path";
 import matter from "gray-matter";
 import { resolveInstallPaths, type InstallScope } from "./paths.js";
-import { mergeMcpServers, removeMcpServers } from "./config-toml.js";
+import { assertConfigTomlReadable, mergeMcpServers, removeMcpServers } from "./config-toml.js";
 import { sanitizeFrontmatter } from "../schemas/frontmatter.js";
 import type { SkillManifest } from "../schemas/manifest.js";
+import type { McpServerDecl } from "../schemas/mcp-server.js";
+import type { ScriptDecl } from "../schemas/script.js";
 
 export interface InstallResult {
   skillName: string;
@@ -27,6 +29,11 @@ export interface UninstallResult {
   wasInstalled: boolean;
 }
 
+interface FrameworkMeta {
+  mcp_servers?: McpServerDecl[];
+  scripts?: ScriptDecl[];
+}
+
 export function installSkill(
   manifest: SkillManifest,
   scope: InstallScope,
@@ -34,11 +41,14 @@ export function installSkill(
 ): InstallResult {
   const name = manifest.frontmatter.name;
   const paths = resolveInstallPaths(name, scope, cwd);
+  const servers = manifest.frontmatter.mcp_servers ?? [];
 
+  if (servers.length > 0) {
+    assertConfigTomlReadable(paths.configTomlPath);
+  }
   copySkillFolder(manifest.skillDir, paths.skillDestDir, manifest);
   writeFrameworkMeta(paths.skillDestDir, manifest);
 
-  const servers = manifest.frontmatter.mcp_servers ?? [];
   const mcpServersAdded = mergeMcpServers(paths.configTomlPath, servers);
 
   return {
@@ -58,12 +68,24 @@ export function uninstallSkill(
 ): UninstallResult {
   const paths = resolveInstallPaths(skillName, scope, cwd);
   const wasInstalled = fs.existsSync(paths.skillDestDir);
+  const namesToRemove =
+    mcpServerNames.length > 0
+      ? mcpServerNames
+      : readInstalledMcpServerNames(paths.skillDestDir);
+  const removableServerNames = filterServersUnusedByOtherSkills(
+    paths.skillsRootDir,
+    skillName,
+    namesToRemove,
+  );
+
+  if (removableServerNames.length > 0) {
+    assertConfigTomlReadable(paths.configTomlPath);
+  }
+  const mcpServersRemoved = removeMcpServers(paths.configTomlPath, removableServerNames);
 
   if (wasInstalled) {
     fs.rmSync(paths.skillDestDir, { recursive: true, force: true });
   }
-
-  const mcpServersRemoved = removeMcpServers(paths.configTomlPath, mcpServerNames);
 
   return {
     skillName,
@@ -119,6 +141,37 @@ function writeFrameworkMeta(destDir: string, manifest: SkillManifest): void {
   );
 }
 
+function readInstalledMcpServerNames(skillDir: string): string[] {
+  const metaPath = path.join(skillDir, "_framework.json");
+  if (!fs.existsSync(metaPath)) return [];
+
+  try {
+    const meta = JSON.parse(fs.readFileSync(metaPath, "utf-8")) as FrameworkMeta;
+    return (meta.mcp_servers ?? []).map((server) => server.name);
+  } catch {
+    return [];
+  }
+}
+
+function filterServersUnusedByOtherSkills(
+  skillsRootDir: string,
+  currentSkillName: string,
+  serverNames: string[],
+): string[] {
+  if (serverNames.length === 0 || !fs.existsSync(skillsRootDir)) return [];
+
+  const candidates = new Set(serverNames);
+  for (const entry of fs.readdirSync(skillsRootDir, { withFileTypes: true })) {
+    if (!entry.isDirectory() || entry.name === currentSkillName) continue;
+
+    for (const serverName of readInstalledMcpServerNames(path.join(skillsRootDir, entry.name))) {
+      candidates.delete(serverName);
+    }
+  }
+
+  return serverNames.filter((name) => candidates.has(name));
+}
+
 /** Minimal YAML serializer — only handles the flat scalar types we write. */
 function serializeYaml(obj: Record<string, unknown>): string {
   return Object.entries(obj)
@@ -128,7 +181,7 @@ function serializeYaml(obj: Record<string, unknown>): string {
         // Multi-line → block scalar
         if (v.includes("\n")) return `${k}: |\n  ${v.replace(/\n/g, "\n  ")}`;
         // Strings needing quoting
-        if (/[:#{}\[\],&*?|<>=!%@`]/.test(v) || v.trim() !== v)
+        if (/[:#{}[\],&*?|<>=!%@`]/.test(v) || v.trim() !== v)
           return `${k}: ${JSON.stringify(v)}`;
         return `${k}: ${v}`;
       }
