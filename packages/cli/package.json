@@ -16,7 +16,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "tsc -p tsconfig.json --watch",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "pnpm --filter @shaoqichen0913/skill-framework build && tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
     "@shaoqichen0913/skill-framework": "workspace:*",
